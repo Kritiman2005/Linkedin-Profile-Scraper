@@ -1,0 +1,9 @@
+import { z } from 'zod'
+
+export const profileRequestSchema = z.object({
+  linkedinUrl: z.string().url().refine((val) => val.includes('linkedin.com/in/'), {
+    message: "Must be a valid LinkedIn profile URL (e.g., https://linkedin.com/in/username)",
+  }),
+})
+
+export type ProfileRequest = z.infer<typeof profileRequestSchema>
