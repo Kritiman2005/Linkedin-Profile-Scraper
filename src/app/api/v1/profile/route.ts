@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const parsed = profileRequestSchema.parse(body)
 
-    const result = await scrapeProfile(parsed.linkedinUrl)
+    const result = await scrapeProfile(parsed.linkedinUrl, parsed.liAt, parsed.jsessionid, parsed.userAgent)
 
     if (!result.success) {
       return NextResponse.json(result, { status: 422 })

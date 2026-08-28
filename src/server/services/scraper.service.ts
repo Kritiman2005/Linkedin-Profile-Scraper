@@ -1,20 +1,13 @@
-import * as dotenv from 'dotenv'
 import { gotScraping } from 'got-scraping'
 import type { ProfileData, ApiResponse } from '../models/profile.model'
 import { extractFromEntityMap } from '../lib/linkedin-parser'
 
-dotenv.config({ path: '.env.local' })
-
-export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<ProfileData>> {
-  const liAt = process.env.LINKEDIN_LI_AT
-  const jsessionid = process.env.LINKEDIN_JSESSIONID
-  const userAgent = process.env.LINKEDIN_USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-
+export async function scrapeProfile(profileUrl: string, liAt: string, jsessionid: string, userAgent: string): Promise<ApiResponse<ProfileData>> {
   if (!liAt || !jsessionid) {
     return {
       success: false,
-      error: 'Missing LinkedIn credentials in .env.local',
-      diagnostics: { statusCode: 500, responseReceived: false, htmlLength: 0, responseType: 'UNKNOWN' }
+      error: 'Missing LinkedIn credentials in request',
+      diagnostics: { statusCode: 400, responseReceived: false, htmlLength: 0, responseType: 'UNKNOWN' }
     }
   }
 
@@ -107,25 +100,24 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
     }
 
     if (!profileUrn) {
-      console.log('[Scraper] No URN found for GraphQL via parsed objects. Falling back to proximity search in HTML...')
+      console.log('[Scraper] No URN found for GraphQL via parsed objects. Falling back to robust regex search in HTML...')
       
-      const indices: number[] = []
-      let i = -1
-      while ((i = html.indexOf(username, i + 1)) !== -1) { indices.push(i) }
+      // Look for the block containing both the vanityName and the selfProfileId, regardless of order
+      // We look for "vanityName":"satyanadella" and "selfProfileId":"ACo..." near each other
+      const regex1 = new RegExp(`\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?".*?\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?"`, 'i')
+      const regex2 = new RegExp(`\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?".*?\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?"`, 'i')
       
-      const candidateUrns: Record<string, number> = {}
-      for (const idx of indices) {
-        const chunk = html.substring(Math.max(0, idx - 200), idx + 200)
-        const matches = chunk.match(/ACo[A-Za-z0-9_-]{36}/g) || []
-        for (const m of matches) {
-            candidateUrns[m] = (candidateUrns[m] || 0) + 1
-        }
+      const match1 = html.match(regex1)
+      const match2 = html.match(regex2)
+      
+      if (match1 && match1[1]) {
+          profileUrn = match1[1]
+      } else if (match2 && match2[1]) {
+          profileUrn = match2[1]
       }
       
-      const sortedCandidates = Object.entries(candidateUrns).sort((a, b) => b[1] - a[1])
-      if (sortedCandidates.length > 0) {
-        profileUrn = sortedCandidates[0][0]
-        console.log(`[Scraper] Found URN via proximity search: ${profileUrn} (Score: ${sortedCandidates[0][1]})`)
+      if (profileUrn) {
+          console.log(`[Scraper] Found REAL URN via fallback regex: ${profileUrn}`)
       } else {
         return { success: false, error: 'Failed to extract Profile URN from HTML. This confirms your account has hit the Commercial Use Search Limit and LinkedIn is hiding the profile data.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
       }
