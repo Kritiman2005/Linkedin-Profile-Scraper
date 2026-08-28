@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv'
+import { gotScraping } from 'got-scraping'
 import type { ProfileData, ApiResponse } from '../models/profile.model'
 import { extractFromEntityMap } from '../lib/linkedin-parser'
 
@@ -7,6 +8,7 @@ dotenv.config({ path: '.env.local' })
 export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<ProfileData>> {
   const liAt = process.env.LINKEDIN_LI_AT
   const jsessionid = process.env.LINKEDIN_JSESSIONID
+  const userAgent = process.env.LINKEDIN_USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
   if (!liAt || !jsessionid) {
     return {
@@ -20,30 +22,32 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
 
   try {
     // ─────────────────────────────────────────────
-    // STEP 1: Fetch HTML to extract URN
+    // STEP 1: Fetch HTML to extract URN using got-scraping (Stealth TLS)
     // ─────────────────────────────────────────────
     console.log(`[Scraper] Fetching HTML for ${profileUrl}...`)
-    const htmlRes = await fetch(profileUrl, {
+    const htmlRes = await gotScraping({
+      url: profileUrl,
       headers: {
         'Cookie': `li_at=${liAt}; JSESSIONID="${csrfToken}";`,
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'user-agent': process.env.LINKEDIN_USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user-agent': userAgent,
         'accept-language': 'en-US,en;q=0.9'
       },
-      redirect: 'manual'
+      throwHttpErrors: false,
+      followRedirect: false
     })
 
-    if (!htmlRes.ok) {
-      if (htmlRes.status === 999) {
-        return { success: false, error: 'LINKEDIN_REQUEST_DENIED (Bot Protection)', diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
-      }
-      if (htmlRes.status === 302) {
-        return { success: false, error: 'LINKEDIN_ANTI_BOT_REDIRECT (Account/IP Flagged)', diagnostics: { statusCode: 302, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
-      }
-      return { success: false, error: `Failed to fetch HTML: HTTP ${htmlRes.status}`, diagnostics: { statusCode: htmlRes.status, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
+    if (htmlRes.statusCode === 999) {
+      return { success: false, error: 'LINKEDIN_REQUEST_DENIED (Bot Protection)', diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+    }
+    if (htmlRes.statusCode === 302) {
+      return { success: false, error: 'LINKEDIN_ANTI_BOT_REDIRECT (Account/IP Flagged)', diagnostics: { statusCode: 302, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+    }
+    if (htmlRes.statusCode !== 200) {
+      return { success: false, error: `Failed to fetch HTML: HTTP ${htmlRes.statusCode}`, diagnostics: { statusCode: htmlRes.statusCode, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
     }
 
-    const html = await htmlRes.text()
+    const html = htmlRes.body
 
     // The username from URL
     const urlObj = new URL(profileUrl)
@@ -51,8 +55,7 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
 
     let profileUrn = ''
     
-    // Instead of regex matching the first URN (which is usually the logged-in user in the navbar),
-    // we parse the rehydration payload and find the URN specifically attached to this vanityName.
+    // Instead of regex matching the first URN, we parse the rehydration payload
     const { parseComoRehydration } = require('../lib/como-parser')
     const comoArr = parseComoRehydration(html)
     
@@ -79,7 +82,7 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
                  }
              }
              
-             // 2. If it's a full Profile object, it's almost certainly the target user (since logged-in user only has a MiniProfile in the navbar)
+             // 2. If it's a full Profile object, it's almost certainly the target user
              if (obj['$type'] === 'com.linkedin.voyager.dash.identity.profile.Profile') {
                  const urn = obj.entityUrn || obj.objectUrn
                  if (urn) {
@@ -104,7 +107,6 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
     }
 
     if (!profileUrn) {
-      // If we completely fail to find a URN, fall back to pure HTML extraction
       console.log('[Scraper] No URN found for GraphQL. Falling back to HTML payload extraction...')
       const match2 = html.match(new RegExp(`\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?".*?\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?"`, 'i'))
       if (match2 && match2[1]) {
@@ -116,31 +118,29 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
       }
     }
 
-    console.log(`[Scraper] Found URN: ${profileUrn}`)
-
     // ─────────────────────────────────────────────
     // STEP 2: Fetch GraphQL Data
     // ─────────────────────────────────────────────
     const queryId = 'voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a'
     const graphqlUrl = `https://www.linkedin.com/voyager/api/graphql?includeWebMetadata=true&variables=(memberIdentity:${profileUrn})&queryId=${queryId}`
 
-    const gqlRes = await fetch(graphqlUrl, {
+    const gqlRes = await gotScraping({
+      url: graphqlUrl,
       headers: {
         'Cookie': `li_at=${liAt}; JSESSIONID="${csrfToken}";`,
         'csrf-token': csrfToken,
         'accept': 'application/vnd.linkedin.normalized+json+2.1',
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+        'user-agent': userAgent,
         'x-li-lang': 'en_US'
-      }
+      },
+      throwHttpErrors: false
     })
 
-    if (!gqlRes.ok) {
-      return { success: false, error: `GraphQL fetch failed: HTTP ${gqlRes.status}`, diagnostics: { statusCode: gqlRes.status, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
+    if (gqlRes.statusCode !== 200) {
+      return { success: false, error: `GraphQL fetch failed: HTTP ${gqlRes.statusCode}`, diagnostics: { statusCode: gqlRes.statusCode, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
     }
 
-    const gqlJson = await gqlRes.json()
-
-    try { require('fs').writeFileSync('test_graphql_data.json', JSON.stringify(gqlJson, null, 2)) } catch { }
+    const gqlJson = JSON.parse(gqlRes.body)
 
     // ─────────────────────────────────────────────
     // STEP 3: Flatten and Parse
@@ -190,15 +190,6 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
     }
 
   } catch (error: any) {
-    // Next.js fetch polyfill throws an error if the server returns HTTP 999 (LinkedIn's anti-bot status)
-    if (error && error.message && error.message.includes('init["status"] must be in the range of 200 to 599')) {
-      return {
-        success: false,
-        error: 'LINKEDIN_REQUEST_DENIED (Bot Protection - HTTP 999)',
-        diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' }
-      }
-    }
-
     return {
       success: false,
       error: error.message || 'NETWORK_ERROR',
