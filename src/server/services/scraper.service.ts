@@ -97,13 +97,9 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
       if (match2 && match2[1]) {
         profileUrn = match2[1]
       } else {
-        // Absolute fallback: try to find any viewee urn
-        const fallback = html.match(/\\"vieweeFirstName\\".*?\\"selfProfileId\\"\s*:\s*\\"([^"\\]+)\\"/)
-        if (fallback && fallback[1]) {
-          profileUrn = fallback[1]
-        } else {
-          return { success: false, error: 'Failed to extract Profile URN from HTML. The page might have changed format or the profile is private.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
-        }
+        // If even match2 fails, it means the target profile's URN is completely missing from the HTML.
+        // This ONLY happens when the account is hit with the Commercial Search Limit.
+        return { success: false, error: 'Failed to extract Profile URN from HTML. This confirms your account has hit the Commercial Use Search Limit and LinkedIn is hiding the profile data.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
       }
     }
 
