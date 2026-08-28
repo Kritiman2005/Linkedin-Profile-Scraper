@@ -67,7 +67,20 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
         }
         
         if (obj['$type'] === 'com.linkedin.voyager.identity.shared.MiniProfile' || obj['$type'] === 'com.linkedin.voyager.dash.identity.profile.Profile') {
-             if (obj.publicIdentifier === username || obj.vanityName === username) {
+             // 1. Try to match by vanityName/publicIdentifier (case insensitive)
+             const pid = (obj.publicIdentifier || obj.vanityName || '').toLowerCase()
+             const targetUsername = username.toLowerCase()
+             
+             if (pid === targetUsername) {
+                 const urn = obj.entityUrn || obj.objectUrn
+                 if (urn) {
+                     const match = urn.match(/urn:li:fs[a-z_]*_profile:([^:]+)/i) || urn.match(/urn:li:member:([^:]+)/i)
+                     if (match) return match[1]
+                 }
+             }
+             
+             // 2. If it's a full Profile object, it's almost certainly the target user (since logged-in user only has a MiniProfile in the navbar)
+             if (obj['$type'] === 'com.linkedin.voyager.dash.identity.profile.Profile') {
                  const urn = obj.entityUrn || obj.objectUrn
                  if (urn) {
                      const match = urn.match(/urn:li:fs[a-z_]*_profile:([^:]+)/i) || urn.match(/urn:li:member:([^:]+)/i)
