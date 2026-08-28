@@ -107,13 +107,26 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
     }
 
     if (!profileUrn) {
-      console.log('[Scraper] No URN found for GraphQL. Falling back to HTML payload extraction...')
-      const match2 = html.match(new RegExp(`\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?".*?\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?"`, 'i'))
-      if (match2 && match2[1]) {
-        profileUrn = match2[1]
+      console.log('[Scraper] No URN found for GraphQL via parsed objects. Falling back to proximity search in HTML...')
+      
+      const indices: number[] = []
+      let i = -1
+      while ((i = html.indexOf(username, i + 1)) !== -1) { indices.push(i) }
+      
+      const candidateUrns: Record<string, number> = {}
+      for (const idx of indices) {
+        const chunk = html.substring(Math.max(0, idx - 200), idx + 200)
+        const matches = chunk.match(/ACo[A-Za-z0-9_-]{36}/g) || []
+        for (const m of matches) {
+            candidateUrns[m] = (candidateUrns[m] || 0) + 1
+        }
+      }
+      
+      const sortedCandidates = Object.entries(candidateUrns).sort((a, b) => b[1] - a[1])
+      if (sortedCandidates.length > 0) {
+        profileUrn = sortedCandidates[0][0]
+        console.log(`[Scraper] Found URN via proximity search: ${profileUrn} (Score: ${sortedCandidates[0][1]})`)
       } else {
-        // If even match2 fails, it means the target profile's URN is completely missing from the HTML.
-        // This ONLY happens when the account is hit with the Commercial Search Limit.
         return { success: false, error: 'Failed to extract Profile URN from HTML. This confirms your account has hit the Commercial Use Search Limit and LinkedIn is hiding the profile data.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
       }
     }
