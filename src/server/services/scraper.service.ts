@@ -45,17 +45,54 @@ export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<Pro
 
     const html = await htmlRes.text()
 
-    let profileUrn = ''
-
     // The username from URL
     const urlObj = new URL(profileUrl)
     const username = urlObj.pathname.split('/').filter(Boolean).pop() || ''
 
-    const urnMatch = html.match(new RegExp(`\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?",\\s*\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?"`, 'i'))
-
-    if (urnMatch && urnMatch[1]) {
-      profileUrn = urnMatch[1]
+    let profileUrn = ''
+    
+    // Instead of regex matching the first URN (which is usually the logged-in user in the navbar),
+    // we parse the rehydration payload and find the URN specifically attached to this vanityName.
+    const { parseComoRehydration } = require('../lib/como-parser')
+    const comoArr = parseComoRehydration(html)
+    
+    function findTargetUrn(obj: any): string | null {
+        if (!obj || typeof obj !== 'object') return null
+        if (Array.isArray(obj)) {
+            for (const item of obj) {
+                const found = findTargetUrn(item)
+                if (found) return found
+            }
+            return null
+        }
+        
+        if (obj['$type'] === 'com.linkedin.voyager.identity.shared.MiniProfile' || obj['$type'] === 'com.linkedin.voyager.dash.identity.profile.Profile') {
+             if (obj.publicIdentifier === username || obj.vanityName === username) {
+                 const urn = obj.entityUrn || obj.objectUrn
+                 if (urn) {
+                     const match = urn.match(/urn:li:fs[a-z_]*_profile:([^:]+)/i) || urn.match(/urn:li:member:([^:]+)/i)
+                     if (match) return match[1]
+                 }
+             }
+        }
+        for (const key of Object.keys(obj)) {
+            const found = findTargetUrn(obj[key])
+            if (found) return found
+        }
+        return null
+    }
+    
+    const targetUrn = findTargetUrn(comoArr)
+    if (targetUrn) {
+        profileUrn = targetUrn
+        console.log(`[Scraper] Found CORRECT Target URN: ${profileUrn}`)
     } else {
+        console.log(`[Scraper] Could not find Target URN for ${username} in payload!`)
+    }
+
+    if (!profileUrn) {
+      // If we completely fail to find a URN, fall back to pure HTML extraction
+      console.log('[Scraper] No URN found for GraphQL. Falling back to HTML payload extraction...')
       const match2 = html.match(new RegExp(`\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?".*?\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?"`, 'i'))
       if (match2 && match2[1]) {
         profileUrn = match2[1]
