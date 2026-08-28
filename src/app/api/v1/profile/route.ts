@@ -11,9 +11,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const parsed = profileRequestSchema.parse(body)
 
-    const data = await scrapeProfile(parsed.linkedinUrl)
+    const result = await scrapeProfile(parsed.linkedinUrl)
 
-    return NextResponse.json(data)
+    if (!result.success) {
+      return NextResponse.json(result, { status: 422 })
+    }
+
+    return NextResponse.json(result)
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Validation Error', details: error.errors }, { status: 400 })

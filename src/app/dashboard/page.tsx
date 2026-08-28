@@ -31,11 +31,13 @@ export default function DashboardPage() {
 
       const data = await res.json()
 
+      // Always set response so we can see the diagnostics payload
+      setResponse(data)
+
       if (!res.ok) {
         throw new Error(data.error || 'Something went wrong')
       }
 
-      setResponse(data)
     } catch (err: any) {
       setError(err.message)
     } finally {

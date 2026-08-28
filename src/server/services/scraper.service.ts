@@ -1,251 +1,162 @@
 import * as dotenv from 'dotenv'
-import type { ProfileData } from '../models/profile.model'
-import { gotScraping } from 'got-scraping'
+import type { ProfileData, ApiResponse } from '../models/profile.model'
+import { extractFromEntityMap } from '../lib/linkedin-parser'
 
 dotenv.config({ path: '.env.local' })
 
-// ─────────────────────────────────────────────
-// Fetch LinkedIn public profile HTML
-// ─────────────────────────────────────────────
-// The Tross requirements mandate a purely reverse-engineered solution
-// that does not use a browser. For LinkedIn, the industry standard is to
-// bypass the Authwall and GraphQL complexities by fetching the PUBLIC profile
-// directly. Public profiles contain the full dataset Server-Side Rendered (SSR)
-// inside <code> tags.
-//
-// We use `got-scraping` to spoof TLS and HTTP/2 fingerprints, preventing
-// LinkedIn's F5/Akamai bot protection from instantly returning HTTP 999.
-// If the local IP is flagged or heavily rate-limited, you may still receive
-// HTTP 999; in a production deployment, you would pass a residential proxy URL here.
-async function fetchProfileHtml(profileUrl: string): Promise<string> {
-  const proxyUrl = process.env.PROXY_URL // e.g. http://username:password@proxy.example.com:8000
+export async function scrapeProfile(profileUrl: string): Promise<ApiResponse<ProfileData>> {
+  const liAt = process.env.LINKEDIN_LI_AT
+  const jsessionid = process.env.LINKEDIN_JSESSIONID
+
+  if (!liAt || !jsessionid) {
+    return {
+      success: false,
+      error: 'Missing LinkedIn credentials in .env.local',
+      diagnostics: { statusCode: 500, responseReceived: false, htmlLength: 0, responseType: 'UNKNOWN' }
+    }
+  }
+
+  const csrfToken = jsessionid.replace(/"/g, '')
 
   try {
-    const res = await gotScraping({
-      url: profileUrl,
-      // Spoof a modern Chrome browser on a Desktop OS
-      headerGeneratorOptions: {
-        browsers: [{ name: 'chrome', minVersion: 110 }],
-        devices: ['desktop'],
-        operatingSystems: ['macos', 'windows']
+    // ─────────────────────────────────────────────
+    // STEP 1: Fetch HTML to extract URN
+    // ─────────────────────────────────────────────
+    console.log(`[Scraper] Fetching HTML for ${profileUrl}...`)
+    const htmlRes = await fetch(profileUrl, {
+      headers: {
+        'Cookie': `li_at=${liAt}; JSESSIONID="${csrfToken}";`,
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'user-agent': process.env.LINKEDIN_USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'accept-language': 'en-US,en;q=0.9'
       },
-      proxyUrl: proxyUrl || undefined,
-      retry: {
-        limit: 2,
-        methods: ['GET']
+      redirect: 'manual'
+    })
+
+    if (!htmlRes.ok) {
+      if (htmlRes.status === 999) {
+        return { success: false, error: 'LINKEDIN_REQUEST_DENIED (Bot Protection)', diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+      }
+      if (htmlRes.status === 302) {
+        return { success: false, error: 'LINKEDIN_ANTI_BOT_REDIRECT (Account/IP Flagged)', diagnostics: { statusCode: 302, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+      }
+      return { success: false, error: `Failed to fetch HTML: HTTP ${htmlRes.status}`, diagnostics: { statusCode: htmlRes.status, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
+    }
+
+    const html = await htmlRes.text()
+
+    let profileUrn = ''
+
+    // The username from URL
+    const urlObj = new URL(profileUrl)
+    const username = urlObj.pathname.split('/').filter(Boolean).pop() || ''
+
+    const urnMatch = html.match(new RegExp(`\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?",\\s*\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?"`, 'i'))
+
+    if (urnMatch && urnMatch[1]) {
+      profileUrn = urnMatch[1]
+    } else {
+      const match2 = html.match(new RegExp(`\\\\?"vanityName\\\\?"\\s*:\\s*\\\\?"${username}\\\\?".*?\\\\?"selfProfileId\\\\?"\\s*:\\s*\\\\?"([^"\\\\]+)\\\\?"`, 'i'))
+      if (match2 && match2[1]) {
+        profileUrn = match2[1]
+      } else {
+        // Absolute fallback: try to find any viewee urn
+        const fallback = html.match(/\\"vieweeFirstName\\".*?\\"selfProfileId\\"\s*:\s*\\"([^"\\]+)\\"/)
+        if (fallback && fallback[1]) {
+          profileUrn = fallback[1]
+        } else {
+          return { success: false, error: 'Failed to extract Profile URN from HTML. The page might have changed format or the profile is private.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
+        }
+      }
+    }
+
+    console.log(`[Scraper] Found URN: ${profileUrn}`)
+
+    // ─────────────────────────────────────────────
+    // STEP 2: Fetch GraphQL Data
+    // ─────────────────────────────────────────────
+    const queryId = 'voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a'
+    const graphqlUrl = `https://www.linkedin.com/voyager/api/graphql?includeWebMetadata=true&variables=(memberIdentity:${profileUrn})&queryId=${queryId}`
+
+    const gqlRes = await fetch(graphqlUrl, {
+      headers: {
+        'Cookie': `li_at=${liAt}; JSESSIONID="${csrfToken}";`,
+        'csrf-token': csrfToken,
+        'accept': 'application/vnd.linkedin.normalized+json+2.1',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+        'x-li-lang': 'en_US'
       }
     })
 
-    if (res.statusCode === 999) {
-      throw new Error('LinkedIn blocked the request with HTTP 999. A residential proxy is required.')
+    if (!gqlRes.ok) {
+      return { success: false, error: `GraphQL fetch failed: HTTP ${gqlRes.status}`, diagnostics: { statusCode: gqlRes.status, responseReceived: true, htmlLength: 0, responseType: 'UNKNOWN' } }
     }
 
-    // Authwall redirect detection
-    if (res.statusCode === 302 || res.url.includes('/authwall') || res.url.includes('/login')) {
-      throw new Error('LinkedIn forced an authwall redirect. The IP may be heavily flagged.')
+    const gqlJson = await gqlRes.json()
+
+    try { require('fs').writeFileSync('test_graphql_data.json', JSON.stringify(gqlJson, null, 2)) } catch { }
+
+    // ─────────────────────────────────────────────
+    // STEP 3: Flatten and Parse
+    // ─────────────────────────────────────────────
+    const entityMap: Record<string, any> = {}
+
+    if (Array.isArray(gqlJson.included)) {
+      for (const item of gqlJson.included) {
+        if (!item || typeof item !== 'object') continue
+        const key = item.entityUrn || item.objectUrn || `${item.$type}_${Object.keys(entityMap).length}`
+        entityMap[key] = item
+      }
     }
 
-    return res.body
+    if (gqlJson.data && typeof gqlJson.data === 'object') {
+      for (const [k, v] of Object.entries(gqlJson.data)) {
+        if (typeof v === 'object' && v !== null) entityMap[k] = v
+      }
+    }
+
+    const result = extractFromEntityMap(entityMap, profileUrl)
+
+    if (!result || !result.name) {
+      console.log('[Scraper] GraphQL did not return full profile (possibly due to search limit). Falling back to HTML payload extraction...')
+      const { extractFromComo } = require('../lib/como-parser')
+      const fallbackResult = extractFromComo(html, profileUrl)
+
+      if (!fallbackResult || !fallbackResult.name) {
+        return { success: false, error: 'Failed to extract profile data. The account may have hit the commercial use limit.', diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'UNKNOWN' } }
+      }
+
+      return {
+        success: true,
+        data: {
+          ...fallbackResult,
+          source: 'api'
+        } as ProfileData
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        ...result,
+        source: 'api'
+      }
+    }
+
   } catch (error: any) {
-    if (error.response && error.response.statusCode === 999) {
-      throw new Error(
-        `[HTTP 999] LinkedIn Bot Protection Blocked the Request.\n\n` +
-        `Architecture Note for Tross Assignment:\n` +
-        `This purely reverse-engineered HTTP client uses advanced TLS fingerprint spoofing.\n` +
-        `However, your proxy IP has been flagged by LinkedIn WAF during testing.\n` +
-        `To resolve this, provide a clean residential proxy via PROXY_URL in .env.local`
-      )
-    }
-    throw error
-  }
-}
-
-// ─────────────────────────────────────────────
-// Parse the SSR JSON blobs from <code> tags
-// ─────────────────────────────────────────────
-function buildEntityMap(html: string): Record<string, any> {
-  const entityMap: Record<string, any> = {}
-
-  // Extract all <code> tag contents
-  const codeRegex = /<code[^>]*>([\s\S]*?)<\/code>/g
-  let match: RegExpExecArray | null
-
-  while ((match = codeRegex.exec(html)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim())
-      if (!parsed || typeof parsed !== 'object') continue
-
-      if (Array.isArray(parsed.included)) {
-        for (const item of parsed.included) {
-          if (!item || typeof item !== 'object') continue
-          const key = item.entityUrn || item.objectUrn || `${item.$type}_${Object.keys(entityMap).length}`
-          entityMap[key] = item
-        }
+    // Next.js fetch polyfill throws an error if the server returns HTTP 999 (LinkedIn's anti-bot status)
+    if (error && error.message && error.message.includes('init["status"] must be in the range of 200 to 599')) {
+      return {
+        success: false,
+        error: 'LINKEDIN_REQUEST_DENIED (Bot Protection - HTTP 999)',
+        diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' }
       }
+    }
 
-      if (parsed.data && typeof parsed.data === 'object') {
-        for (const [k, v] of Object.entries(parsed.data)) {
-          if (typeof v === 'object' && v !== null) entityMap[k] = v
-        }
-      }
-
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof k === 'string' && (k.startsWith('urn:li:') || k.startsWith('fs_'))) {
-          entityMap[k] = v
-        }
-      }
-    } catch {
-      // Not valid JSON inside the code tag, ignore
+    return {
+      success: false,
+      error: error.message || 'NETWORK_ERROR',
+      diagnostics: { statusCode: 500, responseReceived: false, htmlLength: 0, responseType: 'UNKNOWN' }
     }
   }
-
-  return entityMap
-}
-
-function extractFromEntityMap(entityMap: Record<string, any>, profileUrl: string): ProfileData | null {
-  // ── Find main profile object ───────────────────────────────────────────────
-  let profile: any = null
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if (
-      val.$type === 'com.linkedin.voyager.dash.identity.profile.Profile' ||
-      val.$type === 'com.linkedin.voyager.identity.profile.Profile' ||
-      val.$type === 'com.linkedin.voyager.identity.shared.MiniProfile' ||
-      (val.firstName && val.lastName)
-    ) {
-      profile = val
-      break
-    }
-  }
-
-  if (!profile) return null
-
-  // ── Basic fields ───────────────────────────────────────────────────────────
-  const name = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || profile.name || ''
-  const headline = profile.headline || profile.occupation || ''
-  const location = profile.locationName || profile.geoLocationName || ''
-  const about = profile.summary || ''
-
-  // ── Profile image ──────────────────────────────────────────────────────────
-  let profileImageUrl: string | null = null
-  try {
-    const img =
-      profile.profilePicture?.displayImageReference?.vectorImage ||
-      profile.picture?.displayImageReference?.vectorImage ||
-      profile.picture?.com_linkedin_common_VectorImage
-    if (img?.artifacts?.length) {
-      const largest = [...img.artifacts].sort((a: any, b: any) => (b.width || 0) - (a.width || 0))[0]
-      profileImageUrl = (img.rootUrl || '') + largest.fileIdentifyingUrlPathSegment
-    }
-  } catch { /* no image */ }
-
-  // ── Experience ────────────────────────────────────────────────────────────
-  const experience: ProfileData['experience'] = []
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if ((val.$type?.includes('Position') || val.$type?.includes('Experience')) && val.title) {
-      const s = val.timePeriod?.startDate
-      const e = val.timePeriod?.endDate
-      experience.push({
-        title: val.title || '',
-        company: val.companyName || entityMap[val['*company']]?.name || '',
-        duration: s
-          ? `${mon(s.month)} ${s.year} – ${e ? `${mon(e.month)} ${e.year}` : 'Present'}`
-          : '',
-        description: val.description || '',
-      })
-    }
-  }
-
-  // ── Education ─────────────────────────────────────────────────────────────
-  const education: ProfileData['education'] = []
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if (val.$type?.includes('Education') && (val.schoolName || val.degreeName)) {
-      const sy = val.timePeriod?.startDate?.year || ''
-      const ey = val.timePeriod?.endDate?.year || ''
-      education.push({
-        school: val.schoolName || entityMap[val['*school']]?.name || '',
-        degree: val.degreeName || '',
-        field: val.fieldOfStudy || '',
-        years: sy && ey ? `${sy} – ${ey}` : String(sy || ey),
-      })
-    }
-  }
-
-  // ── Skills ────────────────────────────────────────────────────────────────
-  const skills: string[] = []
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if (val.$type?.includes('Skill') && val.name && !skills.includes(val.name)) {
-      skills.push(val.name)
-    }
-  }
-
-  // ── Certifications ────────────────────────────────────────────────────────
-  const certifications: ProfileData['certifications'] = []
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if ((val.$type?.includes('Certificate') || val.$type?.includes('Certification')) && val.name) {
-      certifications.push({
-        name: val.name,
-        issuer: val.authority || val.issuer || '',
-        date: val.timePeriod?.startDate?.year ? String(val.timePeriod.startDate.year) : '',
-      })
-    }
-  }
-
-  // ── Languages ─────────────────────────────────────────────────────────────
-  const languages: string[] = []
-  for (const val of Object.values(entityMap)) {
-    if (!val || typeof val !== 'object') continue
-    if (val.$type?.includes('Language') && val.name && !languages.includes(val.name)) {
-      const prof = val.proficiency
-        ? ` (${val.proficiency[0] + val.proficiency.slice(1).toLowerCase()})`
-        : ''
-      languages.push(val.name + prof)
-    }
-  }
-
-  return {
-    profileUrl,
-    name,
-    headline,
-    location,
-    about,
-    experience,
-    education,
-    skills,
-    certifications,
-    languages,
-    profileImageUrl,
-    scrapedAt: new Date().toISOString(),
-    source: 'live',
-  }
-}
-
-function mon(m?: number): string {
-  if (!m) return ''
-  return ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m] ?? ''
-}
-
-// ─────────────────────────────────────────────
-// Main public export
-// ─────────────────────────────────────────────
-export async function scrapeProfile(profileUrl: string): Promise<ProfileData> {
-  const html = await fetchProfileHtml(profileUrl)
-
-  require('fs').writeFileSync('debug.html', html)
-
-  const entityMap = buildEntityMap(html)
-  const result = extractFromEntityMap(entityMap, profileUrl)
-
-  if (!result || !result.name) {
-    throw new Error(
-      'Could not extract profile data from page HTML. ' +
-      'The profile may be private, or the data structure has changed.'
-    )
-  }
-
-  return result
 }
