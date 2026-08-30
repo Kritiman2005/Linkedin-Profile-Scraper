@@ -40,7 +40,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Scrape Profile
-    const result = await scrapeProfile(parsed.linkedinUrl, parsed.liAt, parsed.jsessionid, parsed.userAgent)
+    const liAt = parsed.liAt || process.env.LINKEDIN_LI_AT || '';
+    const jsessionid = parsed.jsessionid || process.env.LINKEDIN_JSESSIONID || '';
+    const userAgent = parsed.userAgent || '';
+    const result = await scrapeProfile(parsed.linkedinUrl, liAt, jsessionid, userAgent)
 
     if (!result.success) {
       return NextResponse.json(result, { status: 422 })
