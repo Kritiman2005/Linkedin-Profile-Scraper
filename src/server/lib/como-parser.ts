@@ -107,13 +107,29 @@ export function extractFromComo(html: string, profileUrl: string): Partial<Profi
     const experience = currentCompany ? [{ title: headline, company: currentCompany, duration: '', description: 'Extracted from Top Card' }] : [];
     const education = currentEducation ? [{ school: currentEducation, degree: '', field: '', years: '' }] : [];
 
+    let profileImageUrl: string | null = null;
+    const ogImageMatch = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"\s]+)"/i);
+    if (ogImageMatch && ogImageMatch[1] && !ogImageMatch[1].includes('ghost')) {
+        profileImageUrl = ogImageMatch[1].replace(/&amp;/g, '&');
+    } else {
+        const profilePhotoMatch = html.match(/https:\/\/media\.licdn\.com\/dms\/image\/[^"'\\\s]+profile-displayphoto-[^"'\\\s]+/i);
+        if (profilePhotoMatch) {
+            profileImageUrl = profilePhotoMatch[0].replace(/&amp;/g, '&');
+        } else {
+            const anyMediaImage = html.match(/https:\/\/media\.licdn\.com\/dms\/image\/[^"'\\\s]+/i);
+            if (anyMediaImage && !anyMediaImage[0].includes('background')) {
+                profileImageUrl = anyMediaImage[0].replace(/&amp;/g, '&');
+            }
+        }
+    }
+
     return {
         profileUrl,
         name,
         headline,
         location,
         about: '',
-        profileImageUrl: null,
+        profileImageUrl,
         experience,
         education,
         skills: [],
