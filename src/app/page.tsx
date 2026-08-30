@@ -14,12 +14,14 @@ type ProfileData = {
     company: string;
     duration: string;
     description: string;
+    logoUrl?: string;
   }[];
   education: {
     school: string;
     degree: string;
     field: string;
     years: string;
+    logoUrl?: string;
   }[];
   skills: string[];
   certifications: {
@@ -201,9 +203,13 @@ export default function Dashboard() {
                 <div className="space-y-6">
                   {profile.experience.map((exp, idx) => (
                     <div key={idx} className="flex space-x-4">
-                      <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center">
-                         <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                      </div>
+                      {exp.logoUrl ? (
+                         <img src={exp.logoUrl} alt={exp.company} className="w-12 h-12 flex-shrink-0 object-contain rounded" />
+                      ) : (
+                         <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center rounded">
+                            <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                         </div>
+                      )}
                       <div>
                         <h3 className="text-base font-bold text-gray-900">{exp.title}</h3>
                         <p className="text-gray-900 text-sm">{exp.company}</p>
@@ -223,9 +229,13 @@ export default function Dashboard() {
                 <div className="space-y-6">
                   {profile.education.map((edu, idx) => (
                     <div key={idx} className="flex space-x-4">
-                      <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center">
-                         <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                      </div>
+                      {edu.logoUrl ? (
+                         <img src={edu.logoUrl} alt={edu.school} className="w-12 h-12 flex-shrink-0 object-contain rounded" />
+                      ) : (
+                         <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center rounded">
+                            <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                         </div>
+                      )}
                       <div>
                         <h3 className="text-base font-bold text-gray-900">{edu.school}</h3>
                         <p className="text-gray-900 text-sm">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</p>

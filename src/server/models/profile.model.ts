@@ -9,12 +9,14 @@ export interface ProfileData {
     company: string
     duration: string
     description: string
+    logoUrl?: string
   }[]
   education: {
     school: string
     degree: string
     field: string
     years: string
+    logoUrl?: string
   }[]
   skills: string[]
   certifications: {

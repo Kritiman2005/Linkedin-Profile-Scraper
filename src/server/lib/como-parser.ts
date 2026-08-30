@@ -104,8 +104,21 @@ export function extractFromComo(html: string, profileUrl: string): Partial<Profi
 
     if (!name) return null;
 
-    const experience = currentCompany ? [{ title: headline, company: currentCompany, duration: '', description: 'Extracted from Top Card' }] : [];
-    const education = currentEducation ? [{ school: currentEducation, degree: '', field: '', years: '' }] : [];
+    // Try to extract company/school logos from the RSC payload
+    // LinkedIn usually serves these with "company-logo_" in the path
+    let companyLogoUrl: string | undefined = undefined;
+    let schoolLogoUrl: string | undefined = undefined;
+    
+    const allLogos = [...html.matchAll(/https:\/\/media\.licdn\.com\/dms\/image\/[^"'\\\s]+company-logo_[^"'\\\s]+/gi)].map(m => m[0].replace(/&amp;/g, '&'));
+    const uniqueLogos = [...new Set(allLogos)];
+    
+    // Usually, the first logo belongs to the current company, and the second belongs to the university
+    // (This is a heuristic based on Top Card rendering order)
+    if (uniqueLogos.length > 0) companyLogoUrl = uniqueLogos[0];
+    if (uniqueLogos.length > 1) schoolLogoUrl = uniqueLogos[1];
+
+    const experience = currentCompany ? [{ title: headline, company: currentCompany, duration: '', description: 'Extracted from Top Card', logoUrl: companyLogoUrl }] : [];
+    const education = currentEducation ? [{ school: currentEducation, degree: '', field: '', years: '', logoUrl: schoolLogoUrl }] : [];
 
     let profileImageUrl: string | null = null;
     const ogImageMatch = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"\s]+)"/i);
