@@ -168,9 +168,9 @@ export default function Dashboard() {
                   {/* Current Company (if present) */}
                   {profile.experience && profile.experience.length > 0 && (
                      <div className="hidden sm:flex items-center space-x-2 w-56">
-                        <div className="w-8 h-8 bg-gray-100 flex-shrink-0 flex items-center justify-center rounded">
-                           <svg className="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                        </div>
+                        {profile.experience[0].logoUrl ? (
+                           <img src={profile.experience[0].logoUrl} alt={profile.experience[0].company} className="w-8 h-8 object-contain rounded flex-shrink-0" />
+                        ) : null}
                         <span className="text-sm font-semibold text-gray-900 truncate hover:text-[#0a66c2] cursor-pointer hover:underline">{profile.experience[0].company}</span>
                      </div>
                   )}
@@ -204,12 +204,8 @@ export default function Dashboard() {
                   {profile.experience.map((exp, idx) => (
                     <div key={idx} className="flex space-x-4">
                       {exp.logoUrl ? (
-                         <img src={exp.logoUrl} alt={exp.company} className="w-12 h-12 flex-shrink-0 object-contain rounded" />
-                      ) : (
-                         <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center rounded">
-                            <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                         </div>
-                      )}
+                         <img src={exp.logoUrl} alt={exp.company} className="w-12 h-12 flex-shrink-0 object-contain rounded bg-white shadow-sm" />
+                      ) : null}
                       <div>
                         <h3 className="text-base font-bold text-gray-900">{exp.title}</h3>
                         <p className="text-gray-900 text-sm">{exp.company}</p>
@@ -230,12 +226,8 @@ export default function Dashboard() {
                   {profile.education.map((edu, idx) => (
                     <div key={idx} className="flex space-x-4">
                       {edu.logoUrl ? (
-                         <img src={edu.logoUrl} alt={edu.school} className="w-12 h-12 flex-shrink-0 object-contain rounded" />
-                      ) : (
-                         <div className="w-12 h-12 bg-gray-100 flex-shrink-0 flex items-center justify-center rounded">
-                            <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                         </div>
-                      )}
+                         <img src={edu.logoUrl} alt={edu.school} className="w-12 h-12 flex-shrink-0 object-contain rounded bg-white shadow-sm" />
+                      ) : null}
                       <div>
                         <h3 className="text-base font-bold text-gray-900">{edu.school}</h3>
                         <p className="text-gray-900 text-sm">{edu.degree}{edu.field ? `, ${edu.field}` : ''}</p>
