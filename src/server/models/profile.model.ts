@@ -25,14 +25,14 @@ export interface ProfileData {
   languages: string[]
   profileImageUrl: string | null
   scrapedAt: string
-  source: 'live' | 'cache'
+  source: 'api' | 'cache' | 'rsc-fallback' | 'html-fallback'
 }
 
 export type LinkedInDiagnostics = {
   statusCode?: number;
   responseReceived: boolean;
   htmlLength: number;
-  responseType: "PROFILE" | "LOGIN" | "CHALLENGE" | "DENIED" | "UNKNOWN";
+  responseType: "PROFILE" | "LOGIN" | "CHALLENGE" | "DENIED" | "UNKNOWN" | "API_EMPTY_SHELL";
   outgoingIp?: string;
   error?: string;
 };

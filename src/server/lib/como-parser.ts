@@ -1,152 +1,123 @@
 import { ProfileData } from '../models/profile.model'
 
 export function parseComoRehydration(html: string): any[] {
-    const prefix = 'window.__como_rehydration__ = ['
-    const startIndex = html.indexOf(prefix)
-    
-    if (startIndex === -1) {
-        return []
-    }
-    
-    let braceCount = 1
-    let inString = false
-    let escapeNext = false
-    let endIndex = -1
-    
-    for (let i = startIndex + prefix.length; i < html.length; i++) {
-        const char = html[i]
-        
-        if (escapeNext) {
-            escapeNext = false
-            continue
-        }
-        if (char === '\\') {
-            escapeNext = true
-            continue
-        }
-        if (char === '"') {
-            inString = !inString
-            continue
-        }
-        
-        if (!inString) {
-            if (char === '[') {
-                braceCount++
-            } else if (char === ']') {
-                braceCount--
-                if (braceCount === 0) {
-                    endIndex = i
-                    break
-                }
-            }
-        }
-    }
-    
-    if (endIndex === -1) {
-        return []
-    }
-    
-    const jsonStr = html.substring(startIndex + 'window.__como_rehydration__ = '.length - 1, endIndex + 1)
+    const regex = /window\.__como_rehydration__\s*=\s*(\[.*?\])\s*</s;
+    const match = html.match(regex);
+    if (!match) return [];
     try {
-        return JSON.parse(jsonStr)
+        return new Function('return ' + match[1])();
     } catch (e) {
-        console.error('Failed to parse como rehydration', e)
-        return []
+        return [];
     }
 }
-
 export function extractFromComo(html: string, profileUrl: string): Partial<ProfileData> | null {
-    const arr = parseComoRehydration(html)
-    if (!arr || arr.length === 0) return null
+    const regex = /window\.__como_rehydration__\s*=\s*(\[.*?\])\s*</s;
+    const match = html.match(regex);
+    
+    if (!match) return null;
 
-    let name = ''
-    let headline = ''
-    let location = ''
-    let about = ''
-    let profileImageUrl = null
-    let experience: any[] = []
-    let education: any[] = []
+    let arr = [];
+    try {
+        // The array often contains unescaped characters that break JSON.parse
+        // Safely evaluate the array definition
+        arr = new Function('return ' + match[1])();
+    } catch (e) {
+        console.error("Failed to parse RSC array", e);
+        return null;
+    }
     
-    const urlObj = new URL(profileUrl)
-    const username = urlObj.pathname.split('/').filter(Boolean).pop() || ''
+    const fullText = arr.join('');
     
-    // Flatten and search the array
-    function search(obj: any) {
-        if (!obj || typeof obj !== 'object') return
+    // Extract all text nodes from the RSC string literals
+    const textNodes = [...fullText.matchAll(/"children":\["([^"]+)"\]/g)].map(m => m[1]);
+    
+    // Clean up noise and functional UI text
+    const cleanNodes = textNodes.filter(t => 
+        t.length > 2 && 
+        !t.includes('$') && 
+        !t.includes('http') && 
+        !t.includes('www.') && 
+        !t.includes('LinkedIn') &&
+        t !== 'Experience' && 
+        t !== 'Education' &&
+        t !== 'Show all' &&
+        !t.includes('View ') &&
+        !t.includes('followers') &&
+        !t.includes('connections')
+    );
+
+    let name = '';
+    let headline = '';
+    let location = '';
+    let currentCompany = '';
+    let currentEducation = '';
+
+    // Fallback: extract name from title tag in HTML
+    const titleMatch = html.match(/<title>(.*?)\| LinkedIn<\/title>/);
+    if (titleMatch) {
+        name = titleMatch[1].trim();
+    }
+
+    // Heuristic parsing for Top Card data
+    // The Top Card reliably contains "Contact info". 
+    // The nodes immediately preceding it are typically: [Company/Education, Location, "Contact info"]
+    const contactInfoIndex = cleanNodes.findIndex(n => n === 'Contact info');
+    
+    if (contactInfoIndex >= 2) {
+        location = cleanNodes[contactInfoIndex - 1];
+        const companyEduNode = cleanNodes[contactInfoIndex - 2];
         
-        if (Array.isArray(obj)) {
-            for (const item of obj) search(item)
-            return
+        // If the node contains a middle dot '·', it has both Company and Education
+        if (companyEduNode.includes('·')) {
+            const parts = companyEduNode.split('·').map((p: string) => p.trim());
+            currentCompany = parts[0] || '';
+            currentEducation = parts[1] || '';
+        } else {
+            // Otherwise it's usually just the company
+            currentCompany = companyEduNode;
         }
-        
-        // We look for specific entity types in SDUI or raw Profile items
-        if (obj['$type'] === 'com.linkedin.voyager.dash.identity.profile.Profile' || obj['$type'] === 'com.linkedin.voyager.identity.shared.MiniProfile') {
-            if (obj.firstName && obj.lastName) {
-                // If it matches the username or publicIdentifier
-                if (obj.publicIdentifier === username || obj.vanityName === username || profileUrl.includes(obj.publicIdentifier)) {
-                    name = `${obj.firstName} ${obj.lastName}`
-                    if (obj.occupation) headline = obj.occupation
-                    if (obj.picture && obj.picture.com?.linkedin?.common?.VectorImage?.rootUrl) {
-                        profileImageUrl = obj.picture.com.linkedin.common.VectorImage.rootUrl
-                    }
-                }
+    }
+
+    // Fallback: If we couldn't parse company from the anchor, try the headline
+    if (!currentCompany && name) {
+        const nameIndex = cleanNodes.findIndex(n => n.includes(name));
+        if (nameIndex !== -1 && nameIndex + 1 < cleanNodes.length) {
+            headline = cleanNodes[nameIndex + 1];
+            if (headline.includes(' at ')) {
+                currentCompany = headline.split(' at ').pop() || '';
             }
         }
-        
-        // Sometimes the topcard is in a component
-        if (obj.title && obj.title.text && obj.subtitle && obj.subtitle.text) {
-             if (obj.title.text.includes(name) || !name) {
-                 if (!name && obj.title.text.trim().split(' ').length <= 3) {
-                     // Could be name
-                 }
-             }
-        }
-
-        // Just blindly grab things that look like experience (if they exist)
-        if (obj.companyName && obj.title) {
-            experience.push({
-                title: obj.title,
-                company: obj.companyName,
-                dateRange: obj.timePeriod ? `${obj.timePeriod.startDate?.year} - ${obj.timePeriod.endDate?.year || 'Present'}` : '',
-                description: obj.description || ''
-            })
-        }
-        
-        if (obj.schoolName) {
-            education.push({
-                school: obj.schoolName,
-                degree: obj.degreeName || '',
-                fieldOfStudy: obj.fieldOfStudy || '',
-                dateRange: obj.timePeriod ? `${obj.timePeriod.startDate?.year} - ${obj.timePeriod.endDate?.year || ''}` : ''
-            })
-        }
-        
-        for (const key of Object.keys(obj)) {
-            search(obj[key])
+    } else if (name) {
+        const nameIndex = cleanNodes.findIndex(n => n.includes(name));
+        if (nameIndex !== -1 && nameIndex + 1 < cleanNodes.length) {
+            headline = cleanNodes[nameIndex + 1];
         }
     }
-    
-    search(arr)
-    
-    if (!name) {
-        // Fallback: extract name from title tag in HTML
-        const titleMatch = html.match(/<title>(.*?)\| LinkedIn<\/title>/)
-        if (titleMatch) name = titleMatch[1].trim()
+
+    // Education is often isolated further down if it wasn't in the anchor node
+    if (!currentEducation) {
+        const possibleEdu = cleanNodes.find(n => n !== currentCompany && (n.includes('University') || n.includes('College') || n.includes('School') || n.includes('Institute')));
+        if (possibleEdu) {
+            currentEducation = possibleEdu;
+        }
     }
 
-    if (!name) return null
+    if (!name) return null;
+
+    const experience = currentCompany ? [{ title: headline, company: currentCompany, duration: '', description: 'Extracted from Top Card' }] : [];
+    const education = currentEducation ? [{ school: currentEducation, degree: '', field: '', years: '' }] : [];
 
     return {
         profileUrl,
         name,
         headline,
         location,
-        about,
-        profileImageUrl,
+        about: '',
+        profileImageUrl: null,
         experience,
         education,
         skills: [],
         certifications: [],
         languages: []
-    }
+    };
 }
