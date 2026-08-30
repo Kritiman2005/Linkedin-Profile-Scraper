@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 
 type ProfileData = {
@@ -46,6 +46,24 @@ export default function Dashboard() {
     jsessionid: "",
     userAgent: ""
   });
+  const [saveStatus, setSaveStatus] = useState("");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("linkedin_scraper_credentials");
+    if (saved) {
+      try {
+        setCredentials(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse saved credentials", e);
+      }
+    }
+  }, []);
+
+  const handleSaveCredentials = () => {
+    localStorage.setItem("linkedin_scraper_credentials", JSON.stringify(credentials));
+    setSaveStatus("Saved!");
+    setTimeout(() => setSaveStatus(""), 2000);
+  };
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +177,15 @@ export default function Dashboard() {
                   onChange={(e) => setCredentials({...credentials, userAgent: e.target.value})}
                 />
               </div>
+            </div>
+            <div className="mt-3 flex items-center justify-end space-x-3">
+              {saveStatus && <span className="text-xs text-green-600 font-semibold">{saveStatus}</span>}
+              <button
+                onClick={handleSaveCredentials}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+              >
+                Save
+              </button>
             </div>
           </div>
         )}
