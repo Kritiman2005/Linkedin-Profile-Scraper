@@ -95,8 +95,12 @@ export function extractFromComo(html: string, profileUrl: string): Partial<Profi
     }
 
     // Education is often isolated further down if it wasn't in the anchor node
-    if (!currentEducation) {
-        const possibleEdu = cleanNodes.find(n => 
+    if (!currentEducation && contactInfoIndex !== -1) {
+        // Restrict search to nodes near contact info to avoid matching the logged-in user's profile in the navbar
+        const searchStart = Math.max(0, contactInfoIndex - 5);
+        const searchNodes = cleanNodes.slice(searchStart, contactInfoIndex);
+        
+        const possibleEdu = searchNodes.find(n => 
             n !== currentCompany && 
             n !== headline && 
             (n.includes('University') || n.includes('College') || n.includes('School') || n.includes('Institute'))
