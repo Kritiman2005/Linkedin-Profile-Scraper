@@ -3,6 +3,49 @@ import { extractFromEntityMap } from '../lib/linkedin-parser'
 import { extractFromComo, parseComoRehydration } from '../lib/como-parser'
 import * as cheerio from 'cheerio'
 
+export async function fetchProfileHtml(profileUrl: string, liAt: string, jsessionid: string, userAgent: string): Promise<{ success: boolean; html?: string; error?: string; diagnostics: any }> {
+  if (!liAt || !jsessionid) {
+    return {
+      success: false,
+      error: 'Missing LinkedIn credentials in request',
+      diagnostics: { statusCode: 400, responseReceived: false, htmlLength: 0, responseType: 'UNKNOWN' }
+    }
+  }
+
+  const csrfToken = jsessionid.replace(/"/g, '')
+
+  try {
+    console.log(`[Scraper] Fetching HTML for ${profileUrl}...`)
+
+    const htmlRes = await fetch(profileUrl, {
+      headers: {
+        'Cookie': `li_at=${liAt}; JSESSIONID="${csrfToken}";`,
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'user-agent': userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'accept-language': 'en-US,en;q=0.9',
+        'sec-ch-ua': '"Google Chrome";v="120", "Chromium";v="120", "Not?A_Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"macOS"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none'
+      }
+    })
+
+    if (htmlRes.status === 999) {
+      return { success: false, error: 'LINKEDIN_REQUEST_DENIED (Bot Protection)', diagnostics: { statusCode: 999, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+    }
+    if (htmlRes.status === 302) {
+      return { success: false, error: 'LINKEDIN_ANTI_BOT_REDIRECT (Account/IP Flagged)', diagnostics: { statusCode: 302, responseReceived: true, htmlLength: 0, responseType: 'DENIED' } }
+    }
+
+    const html = await htmlRes.text()
+    return { success: true, html, diagnostics: { statusCode: 200, responseReceived: true, htmlLength: html.length, responseType: 'SUCCESS' } }
+  } catch (error: any) {
+    return { success: false, error: error.message, diagnostics: { statusCode: 500, responseReceived: false, htmlLength: 0, responseType: 'ERROR' } }
+  }
+}
+
 export async function scrapeProfile(profileUrl: string, liAt: string, jsessionid: string, userAgent: string): Promise<ApiResponse<ProfileData>> {
   if (!liAt || !jsessionid) {
     return {

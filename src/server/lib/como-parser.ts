@@ -109,7 +109,12 @@ export function extractFromComo(html: string, profileUrl: string): Partial<Profi
     let companyLogoUrl: string | undefined = undefined;
     let schoolLogoUrl: string | undefined = undefined;
     
-    const allLogos = [...html.matchAll(/https:\/\/media\.licdn\.com\/dms\/image\/[^"'\\\s]+company-logo_[^"'\\\s]+/gi)].map(m => m[0].replace(/&amp;/g, '&'));
+    const allLogos: string[] = [];
+    const logoRegex = /"rootUrl":"([^"]+company-logo_)","imageRenditions":\[.*?suffixUrl":"([^"]+)"/g;
+    let logoMatch;
+    while ((logoMatch = logoRegex.exec(fullText)) !== null) {
+        allLogos.push(logoMatch[1] + logoMatch[2]);
+    }
     const uniqueLogos = [...new Set(allLogos)];
     
     // Usually, the first logo belongs to the current company, and the second belongs to the university
