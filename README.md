@@ -53,6 +53,18 @@ Our scraper meticulously reverse-engineers the LinkedIn schema to rebuild a rela
 | **Experience History** | GraphQL |
 | **Education History** | GraphQL ➔ RSC Fallback |
 
+---
+
+## ⚠️ Known Limitations & Bottlenecks
+
+While this pure-HTTP approach is lightweight and fast, it faces structural limitations that are important to understand:
+
+1. **WAF TLS/HTTP2 Fingerprinting:** The GraphQL tier can be blocked by LinkedIn's Web Application Firewall (WAF) not just due to cookie search limits, but because of TLS and HTTP/2 fingerprinting. NodeJS `fetch` requests have distinct cryptographic fingerprints compared to real Chrome browsers. Regardless of how well we spoof headers, the WAF can detect the mismatch and drop the GraphQL payload.
+2. **RSC Fallback Constraints:** The `window.__como_rehydration__` fallback is incredibly robust for bypassing the WAF, but it *only* contains the Top Card fields (Name, Headline, Location, Current Company, Education, Profile Image). It does **not** contain the user's full historical Experience or Education arrays. If the GraphQL tier fails, the historical data will be blank.
+3. **Single-Cookie Bottleneck:** Operating through a single authenticated `li_at` cookie creates a hard rate-limit bottleneck. Heavy scraping on a single account will quickly exhaust its "Commercial Use Search Limit," forcing the scraper into the RSC fallback mode for all subsequent requests until the cookie cools down or is rotated.
+
+---
+
 ## 🔒 Privacy Guarantee
 
 - **No Third-Party Brokers.** All network calls go directly from your machine to LinkedIn.
