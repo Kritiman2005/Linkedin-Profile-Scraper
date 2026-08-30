@@ -96,7 +96,11 @@ export function extractFromComo(html: string, profileUrl: string): Partial<Profi
 
     // Education is often isolated further down if it wasn't in the anchor node
     if (!currentEducation) {
-        const possibleEdu = cleanNodes.find(n => n !== currentCompany && (n.includes('University') || n.includes('College') || n.includes('School') || n.includes('Institute')));
+        const possibleEdu = cleanNodes.find(n => 
+            n !== currentCompany && 
+            n !== headline && 
+            (n.includes('University') || n.includes('College') || n.includes('School') || n.includes('Institute'))
+        );
         if (possibleEdu) {
             currentEducation = possibleEdu;
         }
