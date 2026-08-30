@@ -40,6 +40,12 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [credentials, setCredentials] = useState({
+    liAt: "",
+    jsessionid: "",
+    userAgent: ""
+  });
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,10 +54,15 @@ export default function Dashboard() {
     setProfile(null);
 
     try {
+      const payload: any = { linkedinUrl: url };
+      if (credentials.liAt) payload.liAt = credentials.liAt;
+      if (credentials.jsessionid) payload.jsessionid = credentials.jsessionid;
+      if (credentials.userAgent) payload.userAgent = credentials.userAgent;
+
       const res = await fetch("/api/v1/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linkedinUrl: url }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
@@ -103,8 +114,54 @@ export default function Dashboard() {
             >
               {loading ? "Scraping..." : "Scrape"}
             </button>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-1.5 rounded-full text-gray-500 hover:bg-gray-100 transition-colors focus:outline-none"
+              title="API Credentials"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            </button>
           </div>
         </div>
+        
+        {/* Settings Dropdown Panel */}
+        {showSettings && (
+          <div className="max-w-5xl mx-auto px-4 py-4 bg-white border-t border-gray-200 shadow-sm animate-in fade-in slide-in-from-top-2">
+            <h3 className="text-sm font-bold text-gray-900 mb-3">Custom API Credentials (Overrides .env)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">li_at cookie</label>
+                <input
+                  type="password"
+                  className="block w-full border border-gray-300 rounded-md p-2 text-sm text-gray-900 focus:ring-[#0a66c2] focus:border-[#0a66c2]"
+                  placeholder="Optional"
+                  value={credentials.liAt}
+                  onChange={(e) => setCredentials({...credentials, liAt: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">JSESSIONID cookie</label>
+                <input
+                  type="password"
+                  className="block w-full border border-gray-300 rounded-md p-2 text-sm text-gray-900 focus:ring-[#0a66c2] focus:border-[#0a66c2]"
+                  placeholder="Optional"
+                  value={credentials.jsessionid}
+                  onChange={(e) => setCredentials({...credentials, jsessionid: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">User-Agent</label>
+                <input
+                  type="text"
+                  className="block w-full border border-gray-300 rounded-md p-2 text-sm text-gray-900 focus:ring-[#0a66c2] focus:border-[#0a66c2]"
+                  placeholder="Optional"
+                  value={credentials.userAgent}
+                  onChange={(e) => setCredentials({...credentials, userAgent: e.target.value})}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Main Content */}
